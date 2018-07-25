@@ -1,0 +1,305 @@
+
+#include "softdevice_handler.h"
+#include "ble.h"
+#include "peer_manager.h"
+#include "ble_advdata.h"
+#include "ble_advertising.h"
+#include "fds.h"
+#include "fstorage.h"
+#include "ble_conn_params.h"
+#include "ble_conn_state.h"
+#include "app_timer.h"
+
+#define SYM(x) (void*)(x)
+#define VAR(x) (void*)&(x)
+
+//See "Runtime ABI for ARM Architecture"
+
+//Arithmetic
+extern double __aeabi_dadd(double, double);
+extern double __aeabi_ddiv(double, double);
+extern double __aeabi_dmul(double, double);
+extern double __aeabi_drsub(double, double);
+extern double __aeabi_dsub(double, double);
+
+extern float __aeabi_fadd(float, float);
+extern float __aeabi_fdiv(float, float);
+extern float __aeabi_fmul(float, float);
+extern float __aeabi_frsub(float, float);
+extern float __aeabi_fsub(float, float);
+
+//comparison
+extern void __aeabi_cdcmpeq(double, double);
+extern void __aeabi_cdcmple(double, double);
+//extern void __aeabi_cdcmprle(double, double);
+extern int __aeabi_dcmpeq(double, double);
+extern int __aeabi_dcmple(double, double);
+extern int __aeabi_dcmplt(double, double);
+extern int __aeabi_dcmpge(double, double);
+extern int __aeabi_dcmpgt(double, double);
+extern int __aeabi_dcmpun(double, double);
+
+extern void __aeabi_cfcmpeq(float, float);
+extern void __aeabi_cfcmple(float, float);
+//extern void __aeabi_cfcmprle(float, float);
+extern int __aeabi_fcmpeq(float, float);
+extern int __aeabi_fcmple(float, float);
+extern int __aeabi_fcmplt(float, float);
+extern int __aeabi_fcmpge(float, float);
+extern int __aeabi_fcmpgt(float, float);
+extern int __aeabi_fcmpun(float, float);
+
+
+//conversion to integer
+extern int __aeabi_d2iz(double);
+extern unsigned int __aeabi_d2uiz(double);
+extern long long __aeabi_d2lz(double);
+extern unsigned long long __aeabi_d2ulz(double);
+
+extern int __aeabi_f2iz(float);
+extern unsigned int __aeabi_f2uiz(float);
+extern long long __aeabi_f2lz(float);
+extern unsigned long long __aeabi_f2ulz(float);
+
+//conversion between floating point
+
+extern float __aeabi_d2f(double);
+extern double __aeabi_f2d(float);
+/*extern float __aeabi_h2f(short hf);
+extern float __aeabi_h2f_alt(short hf);
+extern short __aeabi_f2h(float f);
+extern short __aeabi_f2h_alt(float f);
+extern short __aeabi_d2h(double);
+extern short __aeabi_d2h_alt(double);
+*/
+
+//conversion from integer
+extern double __aeabi_i2d(int);
+extern double __aeabi_ui2d(unsigned);
+extern double __aeabi_l2d(long long);
+extern double __aeabi_ul2d(unsigned long long);
+extern float __aeabi_i2f(int);
+extern float __aeabi_ui2f(unsigned);
+extern float __aeabi_l2f(long long);
+extern float __aeabi_ul2f(unsigned long long);
+
+
+
+const void *const _vsymbase[] STORED = {
+    SYM(memcpy),
+    SYM(memset),
+    SYM(memmove),
+    SYM(memcmp),
+    SYM(memchr),
+    SYM(gc_malloc),
+    SYM(gc_free),
+    SYM(gc_info),
+    SYM(gc_pause),
+    SYM(gc_resume),
+    SYM(strlen),
+    VAR(_systime_millis),
+    VAR(_systime_seconds),
+    VAR(_system_frequency),
+    VAR(_gillock),
+    VAR(_memlock),
+
+    /* Threads */
+    SYM(vosSysLock),
+    SYM(vosSysUnlock),
+    SYM(vosSysLockIsr),
+    SYM(vosSysUnlockIsr),
+    SYM(vosThCreate),
+    SYM(vosThDestroy),
+    SYM(vosThGetId),
+    SYM(vosThGetStatus),
+    SYM(vosThSetPriority),
+    SYM(vosThGetPriority),
+    SYM(vosThCurrent),
+    SYM(vosThSleep),
+    SYM(vosThYield),
+    SYM(vosThResume),
+    SYM(vosThResumeIsr),
+    SYM(vosThSuspend),
+    SYM(vosThGetData),
+    SYM(vosInstallHandler),
+    SYM(_port_irq_epilogue),
+    SYM(vosSysReset),
+
+    /*Semaphores*/
+    SYM(vosSemCreate),
+    SYM(vosSemReset),
+    SYM(vosSemGetValue),
+    SYM(vosSemSignal),
+    SYM(vosSemSignalCap),
+    SYM(vosSemSignalIsr),
+    SYM(vosSemWaitTimeout),
+    SYM(vosSemSignalWait),
+    SYM(vosSemDestroy),
+
+    /* Timers */
+    SYM(vosTimerCreate),
+    SYM(vosTimerReadMillis),
+    SYM(vosTimerReadMicros),
+    SYM(vosTimerOneShot),
+    SYM(vosTimerRecurrent),
+    SYM(vosTimerReset),
+    SYM(vosTimerDestroy),
+    SYM(vosTicks),
+
+    /* Mailboxes */
+    SYM(vosMBoxCreate),
+    SYM(vosMBoxDestroy),
+    SYM(vosMBoxPostTimeout),
+    SYM(vosMBoxFetchTimeout),
+    SYM(vosMBoxPostIsr),
+    SYM(vosMBoxFetchIsr),
+    SYM(vosMBoxUsedSlots),
+    SYM(vosMBoxFreeSlots),
+
+
+    /* Events */
+    SYM(vosEventCreate),
+    SYM(vosEventDestroy),
+    SYM(vosEventSet),
+    SYM(vosEventClear),
+    SYM(vosEventWait),
+    SYM(vosEventGetFlag),
+
+    /*VHAL*/
+    SYM(vhalGetPeripheralForPin),
+    SYM(vhalPinSetToPeripheral),
+    SYM(vhalPinSetMode),
+    SYM(vhalPinRead),
+    SYM(vhalPinWrite),
+    SYM(vhalPinToggle),
+    SYM(vhalPinAttachInterrupt),
+    SYM(vhalPinFastSet),
+    SYM(vhalPinFastClear),
+    SYM(vhalPinFastRead),
+    SYM(vhalPinGetPort),
+    SYM(vhalPinGetPad),
+    VAR(_vhalpinclass),
+    VAR(_vhalpinclass),
+    VAR(_vhalpinclassnum),
+    VAR(_vhalpinstatus),
+    VAR(_vhalpinmap),
+    VAR(_vhalpinports),
+    VAR(vhalIrqEnablePrio),
+    VAR(vhalIrqDisable),
+    VAR(_vhal_adc_map),
+    VAR(_vhal_adc_num),
+    VAR(_vhal_spi_map),
+    VAR(_vhal_spi_num),
+    VAR(_vhal_htm_map),
+    VAR(_vhal_htm_num),
+    VAR(_vhal_i2c_map),
+    VAR(_vhal_i2c_num),
+
+    /*VAR(_system_clock_inst),*/
+
+    /*VBL*/
+    SYM(vbl_install_driver),
+    SYM(vbl_printf_stdout),
+
+    /*VM*/
+    SYM(vm_add_irq),
+
+    /*PORT*/
+    SYM(_vm_spi_pins),
+    SYM(_vm_sdio_pins),
+    SYM(_vm_i2c_pins),
+
+    /*PY*/
+    SYM(psequence_new),
+    SYM(pstring_new),
+    SYM(pbytes_new),
+    SYM(ptuple_new),
+    SYM(plist_new),
+    SYM(pshorts_new),
+    SYM(netaddress_to_object),
+    SYM(parse_py_args),
+    SYM(_typetags),
+    SYM(psysobj_new),
+    SYM(pdict_new),
+    SYM(pset_new),
+    SYM(phash_put),
+    SYM(phash_get),
+    SYM(phash_getentry),
+    SYM(phash_del),
+    SYM(phash_clone),
+    SYM(pfloat_new),//viperdebug
+
+    /*ABI*/
+    SYM(__aeabi_dadd),
+    SYM(__aeabi_ddiv),
+    SYM(__aeabi_dmul),
+    SYM(__aeabi_drsub),
+    SYM(__aeabi_dsub),
+    SYM(__aeabi_cdcmpeq),
+    SYM(__aeabi_cdcmple),
+    SYM(__aeabi_dcmpeq),
+    SYM(__aeabi_dcmplt),
+    SYM(__aeabi_dcmple),
+    SYM(__aeabi_dcmpge),
+    SYM(__aeabi_dcmpgt),
+    SYM(__aeabi_dcmpun),
+    SYM(__aeabi_fadd),
+    SYM(__aeabi_fdiv),
+    SYM(__aeabi_fmul),
+    SYM(__aeabi_frsub),
+    SYM(__aeabi_fsub),
+    SYM(__aeabi_cfcmpeq),
+    SYM(__aeabi_cfcmple),
+    SYM(__aeabi_fcmpeq),
+    SYM(__aeabi_fcmplt),
+    SYM(__aeabi_fcmple),
+    SYM(__aeabi_fcmpge),
+    SYM(__aeabi_fcmpgt),
+    SYM(__aeabi_fcmpun),
+    SYM(__aeabi_d2iz),
+    SYM(__aeabi_d2uiz),
+    SYM(__aeabi_d2lz),
+    SYM(__aeabi_d2ulz),
+    SYM(__aeabi_f2iz),
+    SYM(__aeabi_f2uiz),
+    SYM(__aeabi_f2lz),
+    SYM(__aeabi_f2ulz),
+    SYM(__aeabi_d2f),
+    SYM(__aeabi_f2d),
+    SYM(__aeabi_i2d),
+    SYM(__aeabi_ui2d),
+    SYM(__aeabi_l2d),
+    SYM(__aeabi_ul2d),
+    SYM(__aeabi_i2f),
+    SYM(__aeabi_ui2f),
+    SYM(__aeabi_l2f),
+    SYM(__aeabi_ul2f),
+
+    /*S132*/
+    
+    SYM(softdevice_enable),
+    SYM(softdevice_sys_evt_handler_set),
+    SYM(softdevice_ble_evt_handler_set),
+    SYM(softdevice_handler_init),
+    SYM(softdevice_enable_get_default_config),
+    SYM(pm_init),
+    SYM(pm_conn_sec_config_reply),
+    SYM(pm_register),
+    SYM(pm_peers_delete),
+    SYM(pm_sec_params_set),
+    SYM(pm_local_database_has_changed),
+    SYM(fds_gc),
+    SYM(ble_advertising_start),
+    SYM(ble_advertising_init),
+    SYM(ble_conn_params_init),
+    SYM(ble_advertising_on_ble_evt),
+    SYM(ble_advertising_on_sys_evt),
+    SYM(pm_on_ble_evt),
+    SYM(ble_conn_params_on_ble_evt),
+    SYM(ble_conn_state_on_ble_evt),
+    SYM(app_timer_init),
+    SYM(intern_softdevice_events_execute),
+    SYM(fs_sys_event_handler),
+
+
+};
